@@ -2,7 +2,7 @@ import os
 import re
 import shutil
 import time
-
+import subprocess as sp
 from others import pyrouge
 
 REMAP = {"-lrb-": "(", "-rrb-": ")", "-lcb-": "{", "-rcb-": "}",
@@ -42,7 +42,7 @@ def process(params):
         r.model_filename_pattern = 'ref.#ID#.txt'
         r.system_filename_pattern = r'cand.(\d+).txt'
         rouge_results = r.convert_and_evaluate()
-        print(rouge_results)
+        #--print(rouge_results)
         results_dict = r.output_to_dict(rouge_results)
     finally:
         pass
@@ -82,10 +82,10 @@ def test_rouge(temp_dir, cand, ref):
         r.model_filename_pattern = 'ref.#ID#.txt'
         r.system_filename_pattern = r'cand.(\d+).txt'
         rouge_results = r.convert_and_evaluate()
-        print(rouge_results)
+        sp.call('rm -r ' + tmp_dir, shell=True)
         results_dict = r.output_to_dict(rouge_results)
     finally:
-        pass
+        # pass
         if os.path.isdir(tmp_dir):
             shutil.rmtree(tmp_dir)
     return results_dict
@@ -100,3 +100,5 @@ def rouge_results_to_str(results_dict):
         results_dict["rouge_2_recall"] * 100,
         results_dict["rouge_l_recall"] * 100
     )
+if __name__ == '__main__':
+    test_rouge('../temp','RESULT_PATH_focal_step17000.candidate','RESULT_PATH_focal_step17000.gold')

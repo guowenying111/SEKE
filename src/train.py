@@ -10,16 +10,20 @@ import os
 import random
 import signal
 import time
-
+import warnings
+# os.environ["CUDA_VISIBLE_DEVICES"] = '3'
+warnings.filterwarnings('ignore')
 import torch
-from pytorch_pretrained_bert import BertConfig
-
 import distributed
-from models import data_loader, model_builder
-from models.data_loader import load_dataset
-from models.model_builder import Summarizer
+from transformers import AlbertConfig
+from transformers import BertConfig
+from models import data_loader, model_builder, Aldata_loader,clf_loader,Com_loader,Pointer_loader
+# from models.Aldata_loader import load_dataset
+from models.clf_loader import load_dataset
+from models.model_builder import Summarizer,GCNSummarizer,AlbertSummarizer,ClfSummarizer,ComSummarizer,PointerSummarizer
 from models.trainer import build_trainer
 from others.logging import logger, init_logger
+# python train.py -mode train -encoder classifier -dropout 0.1 -bert_data_path ../clf_bert/cnndm -model_path ../models/bert_re_seg/ -lr 2e-3 -visible_gpus 0,1,2,3 -gpu_ranks 0,1,2,3 -world_size 4 -report_every 50 -save_checkpoint_steps 1000 -batch_size 5000 -decay_method noam -train_steps 50000 -accum_count 6 -log_file ../logs/bert_re_seg -use_interval True -warmup_steps 10000 -process False -model clf_albert -reproduce True
 
 model_flags = ['hidden_size', 'ff_size', 'heads', 'inter_layers','encoder','ff_actv', 'use_interval','rnn_size']
 
@@ -126,15 +130,20 @@ def wait_and_validate(args, device_id):
         xent_lst = []
         for i, cp in enumerate(cp_files):
             step = int(cp.split('.')[-2].split('_')[-1])
+            if (args.test_start_from != -1 and step < args.test_start_from):
+                xent_lst.append((1e6, cp))
+                continue
             xent = validate(args,  device_id, cp, step)
             xent_lst.append((xent, cp))
             max_step = xent_lst.index(min(xent_lst))
             if (i - max_step > 10):
                 break
+
         xent_lst = sorted(xent_lst, key=lambda x: x[0])[:3]
         logger.info('PPL %s' % str(xent_lst))
         for xent, cp in xent_lst:
             step = int(cp.split('.')[-2].split('_')[-1])
+            args.train=False
             test(args,  device_id, cp, step)
     else:
         while (True):
@@ -176,15 +185,48 @@ def validate(args,  device_id, pt, step):
         if (k in model_flags):
             setattr(args, k, opt[k])
     print(args)
-
-    config = BertConfig.from_json_file(args.bert_config_path)
-    model = Summarizer(args, device, load_pretrained_bert=False, bert_config = config)
+    if args.model=='bert':
+        config = BertConfig.from_json_file(args.bert_config_path)#from_pretrained
+        model = Summarizer(args, device, load_pretrained_bert=False, bert_config = config)#Albert
+        valid_iter = data_loader.Dataloader(args, load_dataset(args, 'valid', shuffle=False),
+                                            args.batch_size, device,
+                                            shuffle=False, is_test=False)
+    elif args.model=='albert':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        model = AlbertSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  #
+        valid_iter = Aldata_loader.Dataloader(args, load_dataset(args, 'valid', shuffle=False),
+                                            args.batch_size, device,
+                                            shuffle=False, is_test=False)
+    elif args.model=='pointer':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        model = PointerSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  #
+        valid_iter = Pointer_loader.Dataloader(args, load_dataset(args, 'valid', shuffle=False),
+                                            args.batch_size, device,
+                                            shuffle=False, is_test=False)
+    elif args.model=='albert_com':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        model = ComSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  #
+        valid_iter = Com_loader.Dataloader(args, load_dataset(args, 'valid', shuffle=False),
+                                            args.batch_size, device,
+                                            shuffle=False, is_test=False)
+    elif args.model=='gcn':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        model = GCNSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  # Albert
+        valid_iter = Aldata_loader.Dataloader(args, load_dataset(args, 'valid', shuffle=False),
+                                            args.batch_size, device,
+                                            shuffle=False, is_test=False)
+    elif args.model=='clf_albert':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        # model = ClfSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)
+        if args.reproduce:
+            model = ReSummarizer(args, device, load_pretrained_bert=True)
+        else:
+            model = ClfSummarizer(args, device, load_pretrained_bert=True)
+        valid_iter = clf_loader.Dataloader(args, load_dataset(args, 'valid', shuffle=False),
+                                            args.batch_size, device,
+                                            shuffle=False, is_test=False)
     model.load_cp(checkpoint)
     model.eval()
-
-    valid_iter =data_loader.Dataloader(args, load_dataset(args, 'valid', shuffle=False),
-                                  args.batch_size, device,
-                                  shuffle=False, is_test=False)
     trainer = build_trainer(args, device_id, model, None)
     stats = trainer.validate(valid_iter, step)
     return stats.xent()
@@ -203,24 +245,90 @@ def test(args, device_id, pt, step):
         if (k in model_flags):
             setattr(args, k, opt[k])
     print(args)
-
-    config = BertConfig.from_json_file(args.bert_config_path)
-    model = Summarizer(args, device, load_pretrained_bert=False, bert_config = config)
+    if args.model=='bert':
+        config = BertConfig.from_json_file(args.bert_config_path)#from_pretrained
+        test_iter = data_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
+                                           args.batch_size, device,
+                                           shuffle=False, is_test=True)
+        model = Summarizer(args, device, load_pretrained_bert=False, bert_config = config)#Albert
+    elif args.model=='albert':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        model = AlbertSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  #
+        test_iter = Aldata_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
+                                           args.batch_size, device,
+                                           shuffle=False, is_test=True)
+    elif args.model=='albert_com':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        model = ComSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  #
+        test_iter = Com_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
+                                           args.batch_size, device,
+                                           shuffle=False, is_test=True)
+    elif args.model=='gcn':
+        config = AlbertConfig.from_pretrained('albert-base-v2')   # from_pretrained
+        model = GCNSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  # Albert
+        test_iter = Aldata_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
+                                           args.batch_size, device,
+                                           shuffle=False, is_test=True)
+    elif args.model=='pointer':
+        config = AlbertConfig.from_pretrained('albert-base-v2')   # from_pretrained
+        model = PointerSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  # Albert
+        test_iter = Pointer_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
+                                           args.batch_size, device,
+                                           shuffle=False, is_test=True)
+    elif args.model == 'clf_albert':
+        # model = ClfSummarizer(args, device, load_pretrained_bert=True)
+        model = ClfSummarizer(args, device, load_pretrained_bert=True)
+        test_iter = clf_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
+                                           args.batch_size, device,
+                                           shuffle=False, is_test=True)
     model.load_cp(checkpoint)
     model.eval()
 
-    test_iter =data_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
-                                  args.batch_size, device,
-                                  shuffle=False, is_test=True)
+    #Al
     trainer = build_trainer(args, device_id, model, None)
     trainer.test(test_iter,step)
+
+def process(args, device_id, pt, step):
+
+    device = "cpu" if args.visible_gpus == '-1' else "cuda"
+    if (pt != ''):
+        test_from = pt
+    else:
+        test_from = args.test_from
+    logger.info('Loading checkpoint from %s' % test_from)
+    checkpoint = torch.load(test_from, map_location=lambda storage, loc: storage)
+    opt = vars(checkpoint['opt'])
+    for k in opt.keys():
+        if (k in model_flags):
+            setattr(args, k, opt[k])
+    print(args)
+    if args.model=='bert':
+        config = BertConfig.from_json_file(args.bert_config_path)#from_pretrained
+        model = Summarizer(args, device, load_pretrained_bert=False, bert_config = config)#Albert
+    elif args.model=='albert':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        model = AlbertSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  #
+    elif args.model == 'albert_com':
+        config = AlbertConfig.from_pretrained('albert-base-v2')  # from_pretrained
+        model = ComSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)
+    elif args.model=='gcn':
+        config = AlbertConfig.from_pretrained('albert-base-v2')   # from_pretrained
+        model = GCNSummarizer(args, device, load_pretrained_bert=False, Albert_config=config)  # Albert
+    model.load_cp(checkpoint)
+    model.eval()
+
+    test_iter =Aldata_loader.Dataloader(args, load_dataset(args, 'train', shuffle=False),
+                                  args.batch_size, device,
+                                  shuffle=False, is_test=True)#Al
+    trainer = build_trainer(args, device_id, model, None)
+    trainer.process(test_iter,step)
 
 
 def baseline(args, cal_lead=False, cal_oracle=False):
 
     test_iter =data_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
                                   args.batch_size, device,
-                                  shuffle=False, is_test=True)
+                                  shuffle=False, is_test=True)#Al
 
     trainer = build_trainer(args, device_id, None, None)
     #
@@ -250,10 +358,36 @@ def train(args, device_id):
     torch.backends.cudnn.deterministic = True
 
     def train_iter_fct():
-        return data_loader.Dataloader(args, load_dataset(args, 'train', shuffle=True), args.batch_size, device,
+        if args.model=='clf_albert':
+            return clf_loader.Dataloader(args, load_dataset(args, 'train', shuffle=True), args.batch_size, device,
                                                  shuffle=True, is_test=False)
-
-    model = Summarizer(args, device, load_pretrained_bert=True)
+        elif args.model=='albert_com':
+            return Com_loader.Dataloader(args, load_dataset(args, 'train', shuffle=True), args.batch_size, device,
+                                                 shuffle=True, is_test=False)
+        elif args.model=='albert':
+            return Aldata_loader.Dataloader(args, load_dataset(args, 'train', shuffle=True), args.batch_size, device,
+                                                 shuffle=True, is_test=False)
+        elif args.model=='pointer':
+            return Pointer_loader.Dataloader(args, load_dataset(args, 'train', shuffle=True), args.batch_size, device,
+                                                 shuffle=True, is_test=False)
+        else:
+            return data_loader.Dataloader(args, load_dataset(args, 'train', shuffle=True), args.batch_size, device,
+                                            shuffle=True, is_test=False)
+    if args.model=='bert':
+        model = Summarizer(args, device, load_pretrained_bert=True)#Albert
+    elif args.model=='albert':
+        model = AlbertSummarizer(args, device, load_pretrained_bert=True)
+    elif args.model=='pointer':
+        model = PointerSummarizer(args, device, load_pretrained_bert=True)
+    elif args.model=='albert_com':
+        model = ComSummarizer(args, device, load_pretrained_bert=True)
+    elif args.model=='gcn':
+        model = GCNSummarizer(args, device, load_pretrained_bert=True)  # Albert
+    elif args.model == 'clf_albert':
+        if args.reproduce:
+            model = ReSummarizer(args,device,load_pretrained_bert=True)
+        else:
+            model = ClfSummarizer(args, device, load_pretrained_bert=True)
     if args.train_from != '':
         logger.info('Loading checkpoint from %s' % args.train_from)
         checkpoint = torch.load(args.train_from,
@@ -279,29 +413,32 @@ if __name__ == '__main__':
 
 
     parser.add_argument("-encoder", default='classifier', type=str, choices=['classifier','transformer','rnn','baseline'])
-    parser.add_argument("-mode", default='train', type=str, choices=['train','validate','test'])
-    parser.add_argument("-bert_data_path", default='../bert_data/cnndm')
-    parser.add_argument("-model_path", default='../models/')
-    parser.add_argument("-result_path", default='../results/cnndm')
+    parser.add_argument("-model", default='bert', type=str, choices=['bert','gcn','albert','clf_albert','albert_com','pointer'])
+    parser.add_argument("-mode", default='train', type=str, choices=['train','validate','test','lead','oracle'])
+    parser.add_argument("-bert_data_path", default='/home/gwy/ALL/gcn_data/cnndm')
+    parser.add_argument("-model_path", default='../GCNmodels/')
+    parser.add_argument("-result_path", default='../results/GCNcnndm')
     parser.add_argument("-temp_dir", default='../temp')
     parser.add_argument("-bert_config_path", default='../bert_config_uncased_base.json')
 
     parser.add_argument("-batch_size", default=1000, type=int)
 
     parser.add_argument("-use_interval", type=str2bool, nargs='?',const=True,default=True)
+    parser.add_argument("-truncate", type=str2bool, nargs='?',const=True,default=True)
     parser.add_argument("-hidden_size", default=128, type=int)
     parser.add_argument("-ff_size", default=512, type=int)
     parser.add_argument("-heads", default=4, type=int)
     parser.add_argument("-inter_layers", default=2, type=int)
-    parser.add_argument("-rnn_size", default=512, type=int)
+    parser.add_argument("-rnn_size", default=768, type=int)
 
     parser.add_argument("-param_init", default=0, type=float)
     parser.add_argument("-param_init_glorot", type=str2bool, nargs='?',const=True,default=True)
-    parser.add_argument("-dropout", default=0.1, type=float)
+    parser.add_argument("-dropout", default=0, type=float)
     parser.add_argument("-optim", default='adam', type=str)
     parser.add_argument("-lr", default=1, type=float)
     parser.add_argument("-beta1", default= 0.9, type=float)
     parser.add_argument("-beta2", default=0.999, type=float)
+    parser.add_argument("-rate", default=0.2, type=float)
     parser.add_argument("-decay_method", default='', type=str)
     parser.add_argument("-warmup_steps", default=8000, type=int)
     parser.add_argument("-max_grad_norm", default=0, type=float)
@@ -312,6 +449,8 @@ if __name__ == '__main__':
     parser.add_argument("-report_every", default=1, type=int)
     parser.add_argument("-train_steps", default=1000, type=int)
     parser.add_argument("-recall_eval", type=str2bool, nargs='?',const=True,default=False)
+    parser.add_argument("-reproduce", type=str2bool, nargs='?',const=True,default=True)
+    parser.add_argument("-test_start_from", default=-1, type=int)
 
 
     parser.add_argument('-visible_gpus', default='-1', type=str)
@@ -324,8 +463,11 @@ if __name__ == '__main__':
     parser.add_argument("-test_from", default='')
     parser.add_argument("-train_from", default='')
     parser.add_argument("-report_rouge", type=str2bool, nargs='?',const=True,default=True)
+    parser.add_argument("-train", type=str2bool, nargs='?',const=True,default=False)
     parser.add_argument("-block_trigram", type=str2bool, nargs='?', const=True, default=True)
-
+    parser.add_argument("-process", type=str2bool, nargs='?',const=True,default=False)
+    parser.add_argument("-hidden_dim", default=128, type=int)
+    parser.add_argument("-out_channel", default=64, type=int)
     args = parser.parse_args()
     args.gpu_ranks = [int(i) for i in args.gpu_ranks.split(',')]
     os.environ["CUDA_VISIBLE_DEVICES"] = args.visible_gpus
@@ -350,4 +492,21 @@ if __name__ == '__main__':
             step = int(cp.split('.')[-2].split('_')[-1])
         except:
             step = 0
-        test(args, device_id, cp, step)
+        if args.process:
+            pts = sorted(glob.glob(args.bert_data_path + '.' + 'train' + '.[0-9]*.pt'))
+            # t=int(len(pts))
+            for i in pts:
+                args.bert_data_path=i
+                print(args.bert_data_path)
+                name = args.bert_data_path.split('/')[-1]
+                if not os.path.exists(os.path.join('/home/gwy/ALL/BertSum/clf_data', name)):
+                    name = args.bert_data_path.split('/')[-1]
+                    torch.save({'a':1}, os.path.join('/home/gwy/ALL/BertSum/clf_data', name))
+                    process(args, device_id, cp, step)
+                # args.bert_data_path = i
+                # print(args.bert_data_path)
+                # name = args.bert_data_path.split('/')[-1]
+                # if not os.path.exists(os.path.join('/home/gwy/ALL/BertSum/clf_data', name)):
+                #     process(args, device_id, cp, step)
+        else:
+            test(args, device_id, cp, step)

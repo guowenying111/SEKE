@@ -1,13 +1,32 @@
+import argparse
+import bisect
 import gc
 import glob
 import random
+import sys
 
 import torch
-
+import sys
+sys.path.append('../')
 from others.logging import logger
+# from torch_geometric.data import Batch,Data
 
-
-
+# class PairData(Data):
+#     def __init__(self, edge_index_s, edge_weight_s, edge_index_t, edge_weight_t, x_s=None):
+#         super(PairData, self).__init__()
+#         self.edge_index_s = edge_index_s
+#         self.edge_weight_s = edge_weight_s
+#         self.edge_index_t = edge_index_t
+#         self.edge_weight_t=edge_weight_t
+#
+#     def __inc__(self, key, value):
+#         if key == 'edge_index_s':
+#             return self.x_s.size(0)
+#         if key == 'edge_index_t':
+#             return self.x_s.size(0)
+#         else:
+#             return super(PairData, self).__inc__(key, value)
+#
 class Batch(object):
     def _pad(self, data, pad_id, width=-1):
         if (width == -1):
@@ -23,23 +42,22 @@ class Batch(object):
             pre_labels = [x[1] for x in data]
             pre_segs = [x[2] for x in data]
             pre_clss = [x[3] for x in data]
-
+            # graph = [x[4] for x in data]
             src = torch.tensor(self._pad(pre_src, 0))
 
             labels = torch.tensor(self._pad(pre_labels, 0))
             segs = torch.tensor(self._pad(pre_segs, 0))
-            mask = 1 - (src == 0)
+            mask = ~ (src == 0)
 
             clss = torch.tensor(self._pad(pre_clss, -1))
-            mask_cls = 1 - (clss == -1)
-            clss[clss == -1] = 0
-
+            mask_cls = ~ (clss == -1)
             setattr(self, 'clss', clss.to(device))
             setattr(self, 'mask_cls', mask_cls.to(device))
             setattr(self, 'src', src.to(device))
             setattr(self, 'labels', labels.to(device))
             setattr(self, 'segs', segs.to(device))
             setattr(self, 'mask', mask.to(device))
+            # setattr(self, 'graph', graph)
 
             if (is_test):
                 src_str = [x[-2] for x in data]
@@ -185,10 +203,20 @@ class DataIterator(object):
         src_txt = ex['src_txt']
         tgt_txt = ex['tgt_txt']
 
+        end_id = [src[-1]]
+        src = src[:-1][:512 - 1] + end_id
+        segs = segs[:512]
+        max_sent_id = bisect.bisect_left(clss, 512)
+        labels = labels[:max_sent_id]
+        clss = clss[:max_sent_id]
+
+        graph = None
+        # if self.args.model=='gcn':
+        #     graph=PairData(edge_index_s = torch.tensor(ex['syn']).to(device=self.device), edge_weight_s = torch.tensor(ex['syn_attr']).to(device=self.device), edge_index_t = torch.tensor(ex['seq']), edge_weight_t = torch.tensor(ex['seq_attr']))#.to(device=self.device).to(device=self.device))
         if(is_test):
-            return src,labels,segs, clss, src_txt, tgt_txt
+            return src, labels, segs, clss, graph, src_txt, tgt_txt,
         else:
-            return src,labels,segs, clss
+            return src, labels, segs, clss, graph
 
     def batch_buffer(self, data, batch_size):
         minibatch, size_so_far = [], 0
@@ -233,6 +261,50 @@ class DataIterator(object):
                 self.iterations += 1
                 self._iterations_this_epoch += 1
                 batch = Batch(minibatch, self.device, self.is_test)
-
                 yield batch
             return
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("-encoder", default='classifier', type=str)
+    parser.add_argument("-bert_data_path", default='/home/gwy/ALL/gcn_data/cnndm')
+    parser.add_argument("-hidden_dim", default=126, type=int)
+    parser.add_argument("-output_channel", default=126, type=int)
+    parser.add_argument("-param_init", default=0, type=int)
+
+    args = parser.parse_args()
+    # tg=load_dataset(args,'train',False)
+    args.bert_data_path='/home/gwy/ALL/BertSum/bert_data/cnndm'
+    t=load_dataset(args,'train',False)
+    tgs={}
+    tgsg={}
+    positive=0
+    total=0
+    negtive0=0
+    negtive1=0
+    negtive2=0
+    equal=0
+    for ids,exs in enumerate(t):
+        for ex in exs:
+            negtive2+=(sum(ex['labels'])==2)
+            negtive1+=(sum(ex['labels'])==1)
+            negtive0+=(sum(ex['labels'])==0)
+            positive+=(sum(ex['labels'])>3)
+            equal+=(sum(ex['labels'])==3)
+            total+=1
+            print(len(ex['labels']),len(ex['clss']))
+            # if sum(ex['labels'])==0:
+            #     print('#'*100)
+            #     print(ex['tgt_txt'])
+            #     print(ex['labels'])
+
+    print('positive',positive,'total',total,'negtive1',negtive1,'negtive2',negtive2,'negtive0',negtive0,'equal',equal)
+#     # for ids, exs in enumerate(tg):
+#     #     tgsg[ids] = len(exs)
+#
+#     # for k in tgsg.keys():
+#     #     if tgs[k]!=tgsg[k]:
+#     #         print('this is an error')
+#  positive 0 total 287084 negtive1 56687 negtive2 117908 negtive0 9064 equal 103425  train
+# (base) gwy@cherry:~$ positive 0 total 11489 negtive1 1819 negtive2 4591 negtive0 198 equal 4881  test
+# (base) gwy@cherry:~$ positive 0 total 13367 negtive1 1976 negtive2 5247 negtive0 243 equal 5901 valid

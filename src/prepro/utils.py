@@ -1,3 +1,11 @@
+'''
+Author: Guowenying
+Date: 2020-04-02 02:03:28
+LastEditTime: 2021-05-28 01:08:48
+LastEditors: Guowenying
+Description: In User Settings Edit
+FilePath: /ALL/BertSum/src/prepro/utils.py
+'''
 # stopwords = pkgutil.get_data(__package__, 'smart_common_words.txt')
 # stopwords = stopwords.decode('ascii').split('\n')
 # stopwords = {key.strip(): 1 for key in stopwords}

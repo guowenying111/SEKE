@@ -2,7 +2,7 @@
 import torch
 import torch.optim as optim
 from torch.nn.utils import clip_grad_norm_
-
+from transformers import AdamW
 
 # from onmt.utils import use_gpu
 
@@ -182,7 +182,11 @@ class Optimizer(object):
             self.optimizer = optim.Adadelta(self.params, lr=self.learning_rate)
         elif self.method == 'adam':
             self.optimizer = optim.Adam(self.params, lr=self.learning_rate,
-                                        betas=self.betas, eps=1e-9)
+                                        betas=self.betas, eps=1e-9)#
+        elif self.method == "adamw":
+            print('thia is adamw')
+            # self.optimizer = AdamW(self.params, lr=self.learning_rate,
+            #                             betas=self.betas, eps=1e-9,weight_decay=0.0001)
         elif self.method == 'sparseadam':
             self.optimizer = MultipleOptimizer(
                 [optim.Adam(self.params, lr=self.learning_rate,

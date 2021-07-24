@@ -66,7 +66,6 @@ class LayerNormLSTM(nn.Module):
 
         ht = [[None, ] * (self.num_layers * num_directions)] * seq_len
         ct = [[None, ] * (self.num_layers * num_directions)] * seq_len
-
         if self.bidirectional:
             xs = input
             for l, (layer0, layer1) in enumerate(zip(self.hidden0, self.hidden1)):
@@ -92,5 +91,8 @@ class LayerNormLSTM(nn.Module):
             y = torch.stack([h[-1] for h in ht])
             hy = torch.stack(ht[-1])
             cy = torch.stack(ct[-1])
-
         return y, (hy, cy)
+if __name__ == '__main__':
+    x=torch.randn(3,4,768)
+    net=LayerNormLSTM(input_size=768, hidden_size=2, num_layers=1, bias=True, bidirectional=False)
+    net(x)

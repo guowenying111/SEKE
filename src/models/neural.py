@@ -24,13 +24,17 @@ class PositionwiseFeedForward(nn.Module):
         self.w_2 = nn.Linear(d_ff, d_model)
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
         self.actv = gelu
-        self.dropout_1 = nn.Dropout(dropout)
-        self.dropout_2 = nn.Dropout(dropout)
+        # self.dropout_1 = nn.Dropout(dropout)
+        # self.dropout_2 = nn.Dropout(dropout)
+        self.dropout= nn.Dropout(dropout)
 
     def forward(self, x):
-        inter = self.dropout_1(self.actv(self.w_1(self.layer_norm(x))))
-        output = self.dropout_2(self.w_2(inter))
-        return output + x
+        inter = self.actv(self.w_1(x))
+        output = self.dropout(self.w_2(inter))
+        # inter = self.dropout_1(self.actv(self.w_1(self.layer_norm(x))))
+        # output = self.dropout_2(self.w_2(inter))
+        output = self.layer_norm(x + output)
+        return output
 
 
 class MultiHeadedAttention(nn.Module):
@@ -89,9 +93,12 @@ class MultiHeadedAttention(nn.Module):
                                        head_count * self.dim_per_head)
         self.linear_query = nn.Linear(model_dim,
                                       head_count * self.dim_per_head)
+
         self.softmax = nn.Softmax(dim=-1)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout_1 = nn.Dropout(dropout)
+        self.dropout_2 = nn.Dropout(dropout)
         self.use_final_linear = use_final_linear
+        self.layer_norm = nn.LayerNorm(model_dim, eps=1e-6)
         if (self.use_final_linear):
             self.final_linear = nn.Linear(model_dim, model_dim)
 
@@ -138,6 +145,7 @@ class MultiHeadedAttention(nn.Module):
         head_count = self.head_count
         key_len = key.size(1)
         query_len = query.size(1)
+        residual=query
 
         def shape(x):
             """  projection """
@@ -204,25 +212,24 @@ class MultiHeadedAttention(nn.Module):
         # 2) Calculate and scale scores.
         query = query / math.sqrt(dim_per_head)
         scores = torch.matmul(query, key.transpose(2, 3))
-
         if mask is not None:
             mask = mask.unsqueeze(1).expand_as(scores)
-            scores = scores.masked_fill(mask, -1e18)
-
+            scores = scores.masked_fill(mask, -1e18)#substantial which is true
         # 3) Apply attention dropout and compute context vectors.
-
         attn = self.softmax(scores)
-
         if (not predefined_graph_1 is None):
             attn_masked = attn[:, -1] * predefined_graph_1
             attn_masked = attn_masked / (torch.sum(attn_masked, 2).unsqueeze(2) + 1e-9)
-
             attn = torch.cat([attn[:, :-1], attn_masked.unsqueeze(1)], 1)
-
-        drop_attn = self.dropout(attn)
+        drop_attn = self.dropout_1(attn)
         if (self.use_final_linear):
             context = unshape(torch.matmul(drop_attn, value))
             output = self.final_linear(context)
+            output = self.dropout_2(output)
+
+            # add residual and norm layer
+            # print(output.size(),residual.size())
+            output = self.layer_norm(residual + output)
             return output
         else:
             context = torch.matmul(drop_attn, value)
