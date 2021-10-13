@@ -11,7 +11,7 @@ import random
 import signal
 import time
 import warnings
-# os.environ["CUDA_VISIBLE_DEVICES"] = '3'
+os.environ["CUDA_VISIBLE_DEVICES"] = '3'
 warnings.filterwarnings('ignore')
 import torch
 import distributed
@@ -281,6 +281,8 @@ def test(args, device_id, pt, step):
         test_iter = clf_loader.Dataloader(args, load_dataset(args, 'test', shuffle=False),
                                            args.batch_size, device,
                                            shuffle=False, is_test=True)
+    print('-'*30)
+    print(model)
     model.load_cp(checkpoint)
     model.eval()
 
@@ -425,7 +427,7 @@ if __name__ == '__main__':
 
     parser.add_argument("-use_interval", type=str2bool, nargs='?',const=True,default=True)
     parser.add_argument("-truncate", type=str2bool, nargs='?',const=True,default=True)
-    parser.add_argument("-hidden_size", default=128, type=int)
+    parser.add_argument("-hidden_size", default=768, type=int)
     parser.add_argument("-ff_size", default=512, type=int)
     parser.add_argument("-heads", default=4, type=int)
     parser.add_argument("-inter_layers", default=2, type=int)

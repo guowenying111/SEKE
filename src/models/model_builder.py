@@ -337,7 +337,7 @@ class AlbertSummarizer(nn.Module):
             self.encoder = RNNEncoder_attn(bidirectional=True, num_layers=1,
                                       input_size=self.bert.model.config.hidden_size, hidden_size=args.rnn_size,
                                       dropout=args.dropout)
-            self.score = nn.Linear(self.bert.model.config.hidden_size,1,bias=True)
+            self.score = nn.Linear(self.bert.model.config.hidden_size * 2, 1, bias=True)
             self.sigmoid = nn.Sigmoid()
 
         elif (args.encoder == 'baseline'):
@@ -372,10 +372,9 @@ class AlbertSummarizer(nn.Module):
         sents_vec = sents_vec.view(batch,-1,hidden)
 
 
-        # sents_vec = torch.cat((sents_vec, last), dim=-1)#第一次效果有提升
+        sents_vec = torch.cat((sents_vec, last), dim=-1)#第一次效果有提升
 
         sents_vec = sents_vec * mask_cls[:, :, None].float()
-
         score = self.score(sents_vec)
         sent_scores = self.sigmoid(score)* mask_cls[:, :, None].float()
         return sent_scores.squeeze(-1), mask_cls
